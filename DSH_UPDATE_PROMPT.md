@@ -28,6 +28,8 @@ download_paper 和 download_existing 下载科研文献；accept_paper 仍需用
 
    git pull --ff-only origin master
 
+   本次更新完成后，`git rev-parse --short HEAD` 至少应为 `a81c467`（或更晚的提交）。
+
    如果本地有未提交修改，先停止并报告，不要覆盖这些修改。
 5. 使用当前 MCP 的同一个 Python 虚拟环境执行：
 
@@ -68,6 +70,13 @@ download_paper 和 download_existing 下载科研文献；accept_paper 仍需用
 10. 更新期间只做只读验证：调用 list_tasks 或 get_task 读取现有任务状态；不要调用下载、
     采纳、recover 或任何会访问科研通并改变任务状态的工具。验证结束后，报告 MCP 已恢复
     正常文献下载能力。
+
+11. 验证 `list_tasks` 和 `get_task` 应在几秒内返回 JSON；成功结果包含 `ok: true`，失败
+    结果包含 `code`、`message`、`retryable`。如果 CLI 工具等待 30 秒以上，说明仍在运行旧
+    版本或配置未重启，应停止 MCP 子进程并重新加载当前仓库。
+
+12. 最新版本中，`accept_paper(task_id, approved=true)` 是一次性显式授权，不要求设置
+    `LITHELPER_ALLOW_AUTO_ACCEPT=1`；该环境变量只用于无人值守的 `auto_accept=true`。
 
 如果更新后的 CLI 工具调用在 30 秒或 900 秒后超时，优先检查 MCP 子进程是否把 stdin
 隔离为 DEVNULL，以及是否有另一个 lithelper 进程占用同一浏览器 profile；不要重复启动多个
