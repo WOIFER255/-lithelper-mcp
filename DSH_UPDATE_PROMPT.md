@@ -75,6 +75,9 @@ download_paper 和 download_existing 下载科研文献；accept_paper 仍需用
     结果包含 `code`、`message`、`retryable`。如果 CLI 工具等待 30 秒以上，说明仍在运行旧
     版本或配置未重启，应停止 MCP 子进程并重新加载当前仓库。
 
+    MCP 会自动向 lithelper 子进程设置 `PYTHONIOENCODING=utf-8`。如果仍出现中文乱码，
+    先确认 DSH 已运行最新提交，不要把输出按 GBK 二次解码。
+
 12. 最新版本中，`accept_paper(task_id, approved=true)` 是一次性显式授权，不要求设置
     `LITHELPER_ALLOW_AUTO_ACCEPT=1`；该环境变量只用于无人值守的 `auto_accept=true`。
 

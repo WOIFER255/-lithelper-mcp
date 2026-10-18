@@ -66,6 +66,9 @@ LITHELPER_HOME=C:\\Users\\me\\AppData\\Local\\literature-helper
 LITHELPER_CONFIG=C:\\Users\\me\\AppData\\Local\\literature-helper\\config.json
 ```
 
+MCP 会自动向 `lithelper` 子进程注入 `PYTHONIOENCODING=utf-8`，避免 Windows GBK
+区域设置把中文错误、标题和期刊名解码成乱码；客户端配置无需额外补这一项。
+
 ## 客户端配置
 
 ### Claude Desktop

@@ -30,6 +30,7 @@
 - 服务启动时默认在后台检查 PyPI 更新；设置 `LITHELPER_UPDATE_CHECK=0` 可关闭。
 - CLI 子进程必须与 MCP stdio 的 stdin 隔离；如果出现 30/900 秒挂起，检查是否使用了
   最新 `server.py`，以及 profile 锁是否被其他 lithelper 进程占用。
+- MCP 会自动设置 `PYTHONIOENCODING=utf-8`，不要再用 GBK 解码 CLI 的 JSON 或错误文本。
 - 不要把密码、验证码或浏览器 profile 提交到仓库。
 - Edge、Codex IAB 与 Literature Helper Playwright profile 是不同会话；不能假设
   在 Edge 或 IAB 登录会自动让 CLI 登录。

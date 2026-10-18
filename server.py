@@ -148,6 +148,13 @@ def _cli_command(*parts: str, config_path: str | None = None) -> list[str]:
     return command
 
 
+def _cli_environment() -> dict[str, str]:
+    """Use UTF-8 for child CLI output even when Windows locale is GBK."""
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return environment
+
+
 def _run_cli(*parts: str, timeout: float | None = None, config_path: str | None = None) -> tuple[Any, str, int]:
     """Run one CLI action while preventing concurrent profile use."""
     if timeout is None:
@@ -161,6 +168,7 @@ def _run_cli(*parts: str, timeout: float | None = None, config_path: str | None 
                 encoding="utf-8",
                 errors="replace",
                 stdin=subprocess.DEVNULL,
+                env=_cli_environment(),
                 timeout=timeout,
                 check=False,
             )
@@ -212,7 +220,7 @@ def download_paper(
         command.extend(["--download-dir", str(target_dir)])
     try:
         with _PROFILE_LOCK, _profile_file_lock():
-            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=timeout, check=False)
+            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=_cli_environment(), timeout=timeout, check=False)
     except FileNotFoundError:
         return _json_error("LITHELPER_NOT_FOUND", f"找不到 {executable!r}，请检查 LITHELPER_BIN")
     except subprocess.TimeoutExpired:
