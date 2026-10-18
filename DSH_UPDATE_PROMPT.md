@@ -9,8 +9,9 @@
 https://github.com/WOIFER255/-lithelper-mcp.git
 
 用途限制：
-这个 MCP 只允许用于科研文献相关任务。更新过程中不得调用 download_paper、
-download_existing 或 accept_paper，也不要创建新的科研通任务、重复发布 DOI 或转移积分。
+这个 MCP 只允许用于科研文献相关任务。下面的“不要调用下载/采纳”只适用于更新过程中的
+只读验证阶段，不是对更新完成后正常使用的永久限制。更新完成后，用户仍然可以正常调用
+download_paper 和 download_existing 下载科研文献；accept_paper 仍需用户明确确认积分转移。
 
 更新步骤：
 1. 找到现有 MCP 的本地仓库目录和 DeepSeek Harness profile；先读取当前配置，保留：
@@ -54,8 +55,9 @@ download_existing 或 accept_paper，也不要创建新的科研通任务、重�
            toolCallTimeoutMs: 900000
            failOnStartupError: true
 
-8. 默认不要设置 `LITHELPER_ALLOW_AUTO_ACCEPT=1`。更新过程不得调用
-   `accept_paper`，也不得验证真实下载，以免重复发布或转移积分。
+8. 默认不要设置 `LITHELPER_ALLOW_AUTO_ACCEPT=1`。在更新过程的只读验证阶段不得调用
+   `download_paper`、`download_existing` 或 `accept_paper`，以免更新时重复发布、下载或转移
+   积分。更新完成后不要禁用这些工具；它们应恢复正常可用。
 9. 重启 DSH profile，等待 MCP 工具发现完成，确认以下工具出现：
    - mcp__literature-helper__download_paper
    - mcp__literature-helper__download_existing
@@ -63,8 +65,9 @@ download_existing 或 accept_paper，也不要创建新的科研通任务、重�
    - mcp__literature-helper__get_task
    - mcp__literature-helper__accept_paper
    - mcp__literature-helper__check_for_updates
-10. 只做只读验证：调用 list_tasks 或 get_task 读取现有任务状态；不要调用下载、采纳、
-    recover 或任何会访问科研通并改变任务状态的工具。
+10. 更新期间只做只读验证：调用 list_tasks 或 get_task 读取现有任务状态；不要调用下载、
+    采纳、recover 或任何会访问科研通并改变任务状态的工具。验证结束后，报告 MCP 已恢复
+    正常文献下载能力。
 
 最终报告：
 - Git 当前 commit
