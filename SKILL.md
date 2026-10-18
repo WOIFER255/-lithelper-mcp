@@ -28,13 +28,16 @@
 - 已有任务优先使用 `download_existing`，不要为了重试再次发布同一 DOI；
   `high_speed=true` 会为本次恢复启用高速通道配置。
 - 服务启动时默认在后台检查 PyPI 更新；设置 `LITHELPER_UPDATE_CHECK=0` 可关闭。
+- CLI 子进程必须与 MCP stdio 的 stdin 隔离；如果出现 30/900 秒挂起，检查是否使用了
+  最新 `server.py`，以及 profile 锁是否被其他 lithelper 进程占用。
 - 不要把密码、验证码或浏览器 profile 提交到仓库。
 - Edge、Codex IAB 与 Literature Helper Playwright profile 是不同会话；不能假设
   在 Edge 或 IAB 登录会自动让 CLI 登录。
 - 首次真实验证应使用用户明确提供的 DOI/标题；流程可能会在科研通创建求助任务并等待应助。
 - `downloaded_pending_review` 且 `validation.ok=true` 表示 PDF 已下载并通过基础检查。
-- 接受文件会把积分给应助人。`accept_paper(task_id)` 和 `auto_accept=true` 默认关闭，
-  只有设置 `LITHELPER_ALLOW_AUTO_ACCEPT=1` 才会执行；调用前应确认任务 ID、文件和积分。
+- 接受文件会把积分给应助人。`accept_paper(task_id, approved=true)` 是单次显式确认；
+  无人值守的 `auto_accept=true` 才需要 `LITHELPER_ALLOW_AUTO_ACCEPT=1`。调用前应确认任务 ID、文件和积分。
+- 所有工具返回 JSON；下载成功包含 `pdf_path`，失败包含 `code`、`message`、`retryable`。
 - 科研通真实顺序是“采纳文件 → 下载”。如果 CLI 的 `recover` 因本地状态为
   `failed` 拒绝，先让用户确认是否采纳，再调用 `accept_paper(task_id, approved=true)`。
 - DSH 新增 MCP 必须使用 Cordis `- insert:` patch，并将 `toolCallTimeoutMs` 设为至少

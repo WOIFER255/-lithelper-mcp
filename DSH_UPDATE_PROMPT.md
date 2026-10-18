@@ -69,6 +69,10 @@ download_paper 和 download_existing 下载科研文献；accept_paper 仍需用
     采纳、recover 或任何会访问科研通并改变任务状态的工具。验证结束后，报告 MCP 已恢复
     正常文献下载能力。
 
+如果更新后的 CLI 工具调用在 30 秒或 900 秒后超时，优先检查 MCP 子进程是否把 stdin
+隔离为 DEVNULL，以及是否有另一个 lithelper 进程占用同一浏览器 profile；不要重复启动多个
+MCP 实例来“试试看”。
+
 最终报告：
 - Git 当前 commit
 - Python 和 literature-helper 版本

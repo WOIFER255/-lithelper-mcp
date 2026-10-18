@@ -58,6 +58,7 @@ python server.py
 `config.json` 的绝对路径（推荐，这样 MCP 与手动登录使用同一份 profile），
 `LITHELPER_HOME` 指定 Literature Helper 数据目录，`LITHELPER_TIMEOUT_SECONDS`
 指定超时（默认 900 秒），`LITHELPER_DOWNLOAD_DIR` 指定默认下载目录，
+`LITHELPER_READ_TIMEOUT_SECONDS` 指定 list/show 读取超时（默认 60 秒），
 `LITHELPER_UPDATE_CHECK=0` 可关闭启动时 PyPI 更新检查。例如 Windows：
 
 ```text
@@ -157,8 +158,8 @@ download_paper("10.1234/abcd", "D:\\Papers")
 科研通真实顺序是“采纳文件 → 下载”；如果任务处于待确认或本地失败状态，应先调用
 `accept_paper(task_id, approved=true)`，再调用 `download_existing`。
 
-`accept_paper(task_id)` 和 `download_paper(..., auto_accept=true)` 会在科研通确认文件并
-转移积分，默认拒绝执行。只有明确设置以下环境变量后才允许：
+`accept_paper(task_id, approved=true)` 会对当前任务执行一次采纳并转移积分；无人值守的
+`download_paper(..., auto_accept=true)` 仍需设置以下环境变量：
 
 ```text
 LITHELPER_ALLOW_AUTO_ACCEPT=1
@@ -166,6 +167,10 @@ LITHELPER_ALLOW_AUTO_ACCEPT=1
 
 建议生产环境保持关闭，先让 MCP 返回下载结果和任务 ID，再由用户单独调用
 `accept_paper`。这是不可逆的积分转移操作。
+
+所有工具都返回 JSON。成功下载结果包含 `pdf_path`，失败结果包含 `code`、`message` 和
+`retryable`。MCP 通过 stdio 启动 `lithelper` 时会隔离子进程 stdin，避免 CLI 继承 JSON-RPC
+管道而挂起；同一 profile 的不同 MCP 进程也会通过锁文件互斥。
 
 建议先在同一环境完成登录，再启动 MCP：
 

@@ -42,7 +42,7 @@
 2. download_paper 的第一个参数必须是用户提供的 DOI 或准确标题；第二个参数可以是用户指定的绝对下载目录。
 3. 对已有任务优先使用 download_existing，不要重复发布同一 DOI；如果任务需要先采纳，先报告任务状态。
 4. 下载完成后返回 PDF 的绝对路径，并说明任务状态。
-5. `accept_paper` 和 `download_paper(..., auto_accept=true)` 会确认文件并转移科研通积分，默认禁止。除非用户在当前请求中明确要求接受指定任务并确认转移积分，否则不要调用它们，也不要设置 LITHELPER_ALLOW_AUTO_ACCEPT=1。
+5. `accept_paper(task_id, approved=true)` 会对当前任务执行一次采纳并转移科研通积分，只有用户在当前请求中明确确认该任务和积分转移时才允许调用。无人值守的 `download_paper(..., auto_accept=true)` 还必须设置 `LITHELPER_ALLOW_AUTO_ACCEPT=1`。
 6. check_for_updates 只用于检查 literature-helper 版本，不要因为发现更新就自动升级或改变配置；先报告结果并等待用户决定。
 7. 如果登录失效、验证码、权限不足、科研通无应助文件或任务失败，返回原始错误原因，不要绕过验证、验证码、访问限制或付费墙。
 

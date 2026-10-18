@@ -9,6 +9,7 @@ import sys
 import threading
 import tempfile
 import asyncio
+from contextlib import contextmanager
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -19,6 +20,24 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("literature-helper")
 _PROFILE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _profile_file_lock():
+    """Prevent separate MCP processes from sharing one Playwright profile."""
+    home = os.environ.get("LITHELPER_HOME")
+    lock_path = (Path(home).expanduser() if home else Path.home() / ".literature-helper").resolve() / "mcp-profile.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise RuntimeError(f"Literature Helper 浏览器 profile 正被其他进程占用：{lock_path}") from exc
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii", errors="ignore"))
+        yield
+    finally:
+        os.close(fd)
+        lock_path.unlink(missing_ok=True)
 
 
 def _update_report() -> dict[str, Any]:
@@ -112,6 +131,13 @@ def _error_reason(payload: Any, stderr: str, returncode: int) -> str:
     return stderr.strip() or f"lithelper failed with exit code {returncode}"
 
 
+def _json_error(code: str, message: str, *, hint: str = "", retryable: bool = False) -> str:
+    result: dict[str, Any] = {"ok": False, "code": code, "message": message, "retryable": retryable}
+    if hint:
+        result["hint"] = hint
+    return json.dumps(result, ensure_ascii=False)
+
+
 def _cli_command(*parts: str, config_path: str | None = None) -> list[str]:
     executable = os.environ.get("LITHELPER_BIN", "lithelper")
     config_path = config_path or os.environ.get("LITHELPER_CONFIG")
@@ -127,13 +153,14 @@ def _run_cli(*parts: str, timeout: float | None = None, config_path: str | None 
     if timeout is None:
         timeout = float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900"))
     try:
-        with _PROFILE_LOCK:
+        with _PROFILE_LOCK, _profile_file_lock():
             completed = subprocess.run(
                 _cli_command(*parts, config_path=config_path),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                stdin=subprocess.DEVNULL,
                 timeout=timeout,
                 check=False,
             )
@@ -165,7 +192,7 @@ def download_paper(
     """
     query = doi_or_title.strip()
     if not query:
-        return "错误：doi_or_title 不能为空"
+        return _json_error("INPUT_EMPTY", "doi_or_title 不能为空")
 
     executable = os.environ.get("LITHELPER_BIN", "lithelper")
     config_path = os.environ.get("LITHELPER_CONFIG")
@@ -175,7 +202,7 @@ def download_paper(
         try:
             target_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return f"错误：无法创建下载目录 {target_dir}：{exc}"
+            return _json_error("DOWNLOAD_DIR_ERROR", f"无法创建下载目录 {target_dir}：{exc}")
     else:
         target_dir = None
     timeout = float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900"))
@@ -184,31 +211,31 @@ def download_paper(
     if target_dir:
         command.extend(["--download-dir", str(target_dir)])
     try:
-        with _PROFILE_LOCK:
-            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
+        with _PROFILE_LOCK, _profile_file_lock():
+            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=timeout, check=False)
     except FileNotFoundError:
-        return f"错误：找不到 {executable!r}。请先安装 literature-helper 并确保 lithelper 在 PATH 中。"
+        return _json_error("LITHELPER_NOT_FOUND", f"找不到 {executable!r}，请检查 LITHELPER_BIN")
     except subprocess.TimeoutExpired:
-        return f"错误：lithelper 在 {timeout:g} 秒内未完成下载"
+        return _json_error("TIMEOUT", f"lithelper 在 {timeout:g} 秒内未完成下载", retryable=True)
     except OSError as exc:
-        return f"错误：无法启动 lithelper：{exc}"
+        return _json_error("PROCESS_START_ERROR", f"无法启动 lithelper：{exc}")
     try:
         payload = _decode_json(completed.stdout)
     except json.JSONDecodeError:
-        return "错误：lithelper 返回的不是有效 JSON：" + (completed.stderr.strip() or completed.stdout.strip())
+        return _json_error("INVALID_JSON", "lithelper 返回的不是有效 JSON：" + (completed.stderr.strip() or completed.stdout.strip()), retryable=True)
     if completed.returncode != 0 or (isinstance(payload, dict) and payload.get("ok") is False):
-        return "错误：" + _error_reason(payload, completed.stderr, completed.returncode)
+        return _json_error("LITHELPER_ERROR", _error_reason(payload, completed.stderr, completed.returncode), retryable=True)
 
     if auto_accept:
         if os.environ.get("LITHELPER_ALLOW_AUTO_ACCEPT") != "1":
-            return "错误：auto_accept 会转移科研通积分；请先设置 LITHELPER_ALLOW_AUTO_ACCEPT=1"
+            return json.dumps({"ok": False, "code": "AUTO_ACCEPT_NOT_ENABLED", "message": "auto_accept 会转移科研通积分；请先设置 LITHELPER_ALLOW_AUTO_ACCEPT=1", "retryable": False}, ensure_ascii=False)
         task_id = payload.get("id") if isinstance(payload, dict) else None
         task_id = task_id or (payload.get("task_id") if isinstance(payload, dict) else None)
         if not task_id:
-            return "错误：下载成功，但 JSON 中没有找到任务 ID，无法自动接受文件"
+            return json.dumps({"ok": False, "code": "TASK_ID_MISSING", "message": "下载成功，但 JSON 中没有找到任务 ID，无法自动接受文件", "retryable": False}, ensure_ascii=False)
         accepted = _run_lithelper_action("confirm", str(task_id), timeout)
         if accepted[0] is not None:
-            return "错误：PDF 已下载，但自动接受文件失败：" + accepted[0]
+            return json.dumps({"ok": False, "code": "AUTO_ACCEPT_FAILED", "message": "PDF 已下载，但自动接受文件失败：" + accepted[0], "retryable": True}, ensure_ascii=False)
 
     path_value = _first_value(
         payload,
@@ -227,12 +254,12 @@ def download_paper(
     if isinstance(path_value, dict):
         path_value = _first_value(path_value, {"path", "absolute_path", "local_path"})
     if not isinstance(path_value, str) or not path_value.strip():
-        return "错误：下载命令成功，但 JSON 中没有找到 PDF 本地路径"
+        return _json_error("PDF_PATH_MISSING", "下载命令成功，但 JSON 中没有找到 PDF 本地路径", retryable=True)
 
     path = Path(path_value).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
-    return str(path.resolve())
+    return json.dumps({"ok": True, "pdf_path": str(path.resolve()), "task_id": payload.get("id") if isinstance(payload, dict) else None}, ensure_ascii=False)
 
 
 def _run_lithelper_action(action: str, task_id: str, timeout: float) -> tuple[str | None, Any]:
@@ -276,7 +303,7 @@ def _direct_accept_task(task_id: str) -> Any:
             finally:
                 await workflow._safe_close_context(context)
 
-    with _PROFILE_LOCK:
+    with _PROFILE_LOCK, _profile_file_lock():
         return asyncio.run(run())
 
 
@@ -284,9 +311,7 @@ def _direct_accept_task(task_id: str) -> Any:
 def accept_paper(task_id: str, approved: bool = False) -> str:
     """Accept a downloaded file and transfer科研通积分; requires explicit opt-in."""
     if not approved:
-        return "错误：接受文件会转移科研通积分；请传入 approved=true 明确确认"
-    if os.environ.get("LITHELPER_ALLOW_AUTO_ACCEPT") != "1":
-        return "错误：接受文件会转移科研通积分；请先设置 LITHELPER_ALLOW_AUTO_ACCEPT=1"
+        return json.dumps({"ok": False, "code": "APPROVAL_REQUIRED", "message": "接受文件会转移科研通积分；请传入 approved=true 明确确认", "retryable": False}, ensure_ascii=False)
     error, payload = _run_lithelper_action("confirm", task_id.strip(), float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900")))
     if error:
         if os.environ.get("LITHELPER_DIRECT_BROWSER_FALLBACK", "1") == "1":
@@ -295,25 +320,27 @@ def accept_paper(task_id: str, approved: bool = False) -> str:
                 return json.dumps({"ok": True, "method": "direct_browser_fallback", "task": direct}, ensure_ascii=False)
             except Exception as direct_error:
                 error = f"{error}；浏览器兜底也失败：{direct_error}"
-        return "错误：" + error
-    return json.dumps(payload, ensure_ascii=False)
+        return json.dumps({"ok": False, "code": "ACCEPT_FAILED", "message": error, "retryable": True}, ensure_ascii=False)
+    return json.dumps({"ok": True, "task": payload}, ensure_ascii=False)
 
 
 @mcp.tool()
 def list_tasks() -> str:
     """List local Literature Helper tasks without publishing or downloading anything."""
-    payload, error, _ = _run_cli("list", timeout=30)
+    timeout = float(os.environ.get("LITHELPER_READ_TIMEOUT_SECONDS", "60"))
+    payload, error, _ = _run_cli("list", timeout=timeout)
     if error:
-        return json.dumps({"ok": False, "error": error}, ensure_ascii=False)
+        return _json_error("LIST_FAILED", error, retryable=True)
     return json.dumps({"ok": True, "tasks": payload}, ensure_ascii=False)
 
 
 @mcp.tool()
 def get_task(task_id: str) -> str:
     """Read one task record, including request URL and current status."""
-    payload, error, _ = _run_cli("show", task_id.strip(), timeout=30)
+    timeout = float(os.environ.get("LITHELPER_READ_TIMEOUT_SECONDS", "60"))
+    payload, error, _ = _run_cli("show", task_id.strip(), timeout=timeout)
     if error:
-        return json.dumps({"ok": False, "error": error, "task_id": task_id}, ensure_ascii=False)
+        return json.dumps({"ok": False, "code": "TASK_READ_FAILED", "message": error, "task_id": task_id, "retryable": True}, ensure_ascii=False)
     return json.dumps({"ok": True, "task": payload}, ensure_ascii=False)
 
 
