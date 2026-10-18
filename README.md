@@ -1,6 +1,7 @@
 # literature-helper MCP Server
 
-这个 MCP Server 暴露 `download_paper(doi_or_title: string)`。它通过
+这个 MCP Server 暴露 `download_paper`、`accept_paper` 和 `check_for_updates`。
+`download_paper(doi_or_title, download_dir?, auto_accept?)` 通过
 `subprocess` 调用 Literature Helper 的非交互 JSON CLI：
 
 ```text
@@ -55,7 +56,8 @@ python server.py
 可选环境变量：`LITHELPER_BIN` 指定可执行文件路径，`LITHELPER_CONFIG` 指定
 `config.json` 的绝对路径（推荐，这样 MCP 与手动登录使用同一份 profile），
 `LITHELPER_HOME` 指定 Literature Helper 数据目录，`LITHELPER_TIMEOUT_SECONDS`
-指定超时（默认 900 秒）。例如 Windows：
+指定超时（默认 900 秒），`LITHELPER_DOWNLOAD_DIR` 指定默认下载目录，
+`LITHELPER_UPDATE_CHECK=0` 可关闭启动时 PyPI 更新检查。例如 Windows：
 
 ```text
 LITHELPER_HOME=C:\\Users\\me\\AppData\\Local\\literature-helper
@@ -114,6 +116,24 @@ macOS/Linux 示例：
 ```
 
 具体配置文件位置和键名以客户端当前版本为准；MCP 传输方式是 stdio。
+
+### 指定下载目录与积分确认
+
+也可以在调用工具时传入绝对目录：
+
+```text
+download_paper("10.1234/abcd", "D:\\Papers")
+```
+
+`accept_paper(task_id)` 和 `download_paper(..., auto_accept=true)` 会在科研通确认文件并
+转移积分，默认拒绝执行。只有明确设置以下环境变量后才允许：
+
+```text
+LITHELPER_ALLOW_AUTO_ACCEPT=1
+```
+
+建议生产环境保持关闭，先让 MCP 返回下载结果和任务 ID，再由用户单独调用
+`accept_paper`。这是不可逆的积分转移操作。
 
 建议先在同一环境完成登录，再启动 MCP：
 
