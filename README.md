@@ -1,6 +1,7 @@
 # literature-helper MCP Server
 
-这个 MCP Server 暴露 `download_paper`、`accept_paper` 和 `check_for_updates`。
+这个 MCP Server 暴露 `download_paper`、`download_existing`、`list_tasks`、`get_task`、
+`accept_paper` 和 `check_for_updates`。
 `download_paper(doi_or_title, download_dir?, auto_accept?)` 通过
 `subprocess` 调用 Literature Helper 的非交互 JSON CLI：
 
@@ -98,7 +99,33 @@ macOS/Linux 示例：
 }
 ```
 
-### Codex / DSH
+### DeepSeek Harness
+
+DSH 使用 Cordis patch；新增 MCP 必须使用 `insert`，不是顶层 `id` 覆盖：
+
+```yaml
+- insert:
+    - id: mcp-literature-helper
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: literature-helper
+        transport: stdio
+        command: "C:\\path\\to\\.venv\\Scripts\\python.exe"
+        args: ["C:\\path\\to\\server.py"]
+        cwd: "C:\\path\\to\\project"
+        env:
+          LITHELPER_BIN: "C:\\path\\to\\.venv\\Scripts\\lithelper.exe"
+          LITHELPER_HOME: "C:\\Users\\<user>\\AppData\\Local\\literature-helper"
+          LITHELPER_CONFIG: "C:\\Users\\<user>\\AppData\\Local\\literature-helper\\config.json"
+          LITHELPER_TIMEOUT_SECONDS: "900"
+        toolCallTimeoutMs: 900000
+        failOnStartupError: true
+```
+
+工具会以 `mcp__literature-helper__<tool>` 形式出现。长任务必须把
+`toolCallTimeoutMs` 设为至少 `900000`；默认 60 秒不够。
+
+### Codex / 其他 MCP 客户端
 
 在 MCP 配置的 `servers`（或等价的 MCP server 列表）中使用同样的 `command`、
 `args`、`env` 三个字段；例如：
@@ -117,13 +144,18 @@ macOS/Linux 示例：
 
 具体配置文件位置和键名以客户端当前版本为准；MCP 传输方式是 stdio。
 
-### 指定下载目录与积分确认
+### 指定下载目录、续接任务与积分确认
 
 也可以在调用工具时传入绝对目录：
 
 ```text
 download_paper("10.1234/abcd", "D:\\Papers")
 ```
+
+已有任务使用 `list_tasks()` / `get_task(task_id)` 查看状态，使用
+`download_existing(task_id, download_dir?, high_speed?)` 续接下载，避免重复发布同一 DOI。
+科研通真实顺序是“采纳文件 → 下载”；如果任务处于待确认或本地失败状态，应先调用
+`accept_paper(task_id, approved=true)`，再调用 `download_existing`。
 
 `accept_paper(task_id)` 和 `download_paper(..., auto_accept=true)` 会在科研通确认文件并
 转移积分，默认拒绝执行。只有明确设置以下环境变量后才允许：

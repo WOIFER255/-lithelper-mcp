@@ -27,18 +27,24 @@
    - LITHELPER_CONFIG：与登录会话对应的 config.json 绝对路径
    - 可选 LITHELPER_DOWNLOAD_DIR：默认 PDF 下载目录
 6. 首次使用时运行 `lithelper login --manual-browser`，让用户自己在打开的浏览器中完成科研通登录、密码输入和验证码；不要代填或保存这些敏感信息。
-7. 重启 MCP Client，确认发现以下工具：
+7. 在 DSH 的 Cordis patch 中用 `- insert:` 新增插件（顶层 `- id:` 只覆盖已有插件），
+   并将 `toolCallTimeoutMs` 设为 `900000`。
+8. 重启 MCP Client，确认发现以下工具：
    - mcp__literature-helper__download_paper
+   - mcp__literature-helper__download_existing
+   - mcp__literature-helper__list_tasks
+   - mcp__literature-helper__get_task
    - mcp__literature-helper__accept_paper
    - mcp__literature-helper__check_for_updates
 
 调用规则：
-1. 只有当用户明确提出文献查找、论文下载、DOI/标题检索或文献整理任务时，才允许调用 download_paper。
+1. 只有当用户明确提出文献查找、论文下载、DOI/标题检索或文献整理任务时，才允许调用 download_paper、download_existing、list_tasks 或 get_task。
 2. download_paper 的第一个参数必须是用户提供的 DOI 或准确标题；第二个参数可以是用户指定的绝对下载目录。
-3. 下载完成后返回 PDF 的绝对路径，并说明任务状态。
-4. `accept_paper` 和 `download_paper(..., auto_accept=true)` 会确认文件并转移科研通积分，默认禁止。除非用户在当前请求中明确要求接受指定任务并确认转移积分，否则不要调用它们，也不要设置 LITHELPER_ALLOW_AUTO_ACCEPT=1。
-5. check_for_updates 只用于检查 literature-helper 版本，不要因为发现更新就自动升级或改变配置；先报告结果并等待用户决定。
-6. 如果登录失效、验证码、权限不足、科研通无应助文件或任务失败，返回原始错误原因，不要绕过验证、验证码、访问限制或付费墙。
+3. 对已有任务优先使用 download_existing，不要重复发布同一 DOI；如果任务需要先采纳，先报告任务状态。
+4. 下载完成后返回 PDF 的绝对路径，并说明任务状态。
+5. `accept_paper` 和 `download_paper(..., auto_accept=true)` 会确认文件并转移科研通积分，默认禁止。除非用户在当前请求中明确要求接受指定任务并确认转移积分，否则不要调用它们，也不要设置 LITHELPER_ALLOW_AUTO_ACCEPT=1。
+6. check_for_updates 只用于检查 literature-helper 版本，不要因为发现更新就自动升级或改变配置；先报告结果并等待用户决定。
+7. 如果登录失效、验证码、权限不足、科研通无应助文件或任务失败，返回原始错误原因，不要绕过验证、验证码、访问限制或付费墙。
 
 安装完成后，先只报告 MCP 是否成功启动和工具是否被发现；不要在没有文献任务时调用下载工具。
 ```

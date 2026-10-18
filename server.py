@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 import threading
+import tempfile
+import asyncio
 import urllib.request
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -16,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 
 
 mcp = FastMCP("literature-helper")
+_PROFILE_LOCK = threading.Lock()
 
 
 def _update_report() -> dict[str, Any]:
@@ -109,6 +112,46 @@ def _error_reason(payload: Any, stderr: str, returncode: int) -> str:
     return stderr.strip() or f"lithelper failed with exit code {returncode}"
 
 
+def _cli_command(*parts: str, config_path: str | None = None) -> list[str]:
+    executable = os.environ.get("LITHELPER_BIN", "lithelper")
+    config_path = config_path or os.environ.get("LITHELPER_CONFIG")
+    command = [executable]
+    if config_path:
+        command.extend(["--config", config_path])
+    command.extend(["--json", "--non-interactive", *parts])
+    return command
+
+
+def _run_cli(*parts: str, timeout: float | None = None, config_path: str | None = None) -> tuple[Any, str, int]:
+    """Run one CLI action while preventing concurrent profile use."""
+    if timeout is None:
+        timeout = float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900"))
+    try:
+        with _PROFILE_LOCK:
+            completed = subprocess.run(
+                _cli_command(*parts, config_path=config_path),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+    except FileNotFoundError:
+        return None, "找不到 lithelper，请检查 LITHELPER_BIN", 127
+    except subprocess.TimeoutExpired:
+        return None, f"lithelper 在 {timeout:g} 秒内未完成", 124
+    except OSError as exc:
+        return None, f"无法启动 lithelper：{exc}", 126
+    try:
+        payload = _decode_json(completed.stdout)
+    except json.JSONDecodeError:
+        return None, completed.stderr.strip() or completed.stdout.strip() or "lithelper 返回了无效 JSON", completed.returncode
+    if completed.returncode != 0 or (isinstance(payload, dict) and payload.get("ok") is False):
+        return payload, _error_reason(payload, completed.stderr, completed.returncode), completed.returncode
+    return payload, "", completed.returncode
+
+
 @mcp.tool()
 def download_paper(
     doi_or_title: str,
@@ -136,37 +179,23 @@ def download_paper(
     else:
         target_dir = None
     timeout = float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900"))
-    command = [executable]
-    if config_path:
-        command.extend(["--config", config_path])
-    command.extend(["--json", "--non-interactive", "fetch", query])
+    # Keep the existing fetch-specific command because it accepts --download-dir.
+    command = _cli_command("fetch", query)
     if target_dir:
         command.extend(["--download-dir", str(target_dir)])
     try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
+        with _PROFILE_LOCK:
+            completed = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
     except FileNotFoundError:
         return f"错误：找不到 {executable!r}。请先安装 literature-helper 并确保 lithelper 在 PATH 中。"
     except subprocess.TimeoutExpired:
         return f"错误：lithelper 在 {timeout:g} 秒内未完成下载"
     except OSError as exc:
         return f"错误：无法启动 lithelper：{exc}"
-
     try:
         payload = _decode_json(completed.stdout)
     except json.JSONDecodeError:
-        return (
-            "错误：lithelper 返回的不是有效 JSON："
-            + (completed.stderr.strip() or completed.stdout.strip())
-        )
-
+        return "错误：lithelper 返回的不是有效 JSON：" + (completed.stderr.strip() or completed.stdout.strip())
     if completed.returncode != 0 or (isinstance(payload, dict) and payload.get("ok") is False):
         return "错误：" + _error_reason(payload, completed.stderr, completed.returncode)
 
@@ -208,36 +237,120 @@ def download_paper(
 
 def _run_lithelper_action(action: str, task_id: str, timeout: float) -> tuple[str | None, Any]:
     """Run a JSON lithelper action and return (error, payload)."""
-    executable = os.environ.get("LITHELPER_BIN", "lithelper")
-    config_path = os.environ.get("LITHELPER_CONFIG")
-    command = [executable]
-    if config_path:
-        command.extend(["--config", config_path])
-    command.extend(["--json", "--non-interactive", action, task_id, "--headless"])
-    try:
-        completed = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False
-        )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
-        return str(exc), None
-    try:
-        payload = _decode_json(completed.stdout)
-    except json.JSONDecodeError:
-        return completed.stderr.strip() or completed.stdout.strip() or "无效 JSON", None
-    if completed.returncode != 0 or (isinstance(payload, dict) and payload.get("ok") is False):
-        return _error_reason(payload, completed.stderr, completed.returncode), payload
-    return None, payload
+    payload, error, _ = _run_cli(action, task_id, "--headless", timeout=timeout)
+    return (error or None), payload
+
+
+def _direct_accept_task(task_id: str) -> Any:
+    """Accept a site file directly when CLI state is stale/failed.
+
+    This uses Literature Helper's own adapter/selectors and persistent profile,
+    so it can handle the site's layui confirmation layer without JS injection.
+    """
+    async def run() -> Any:
+        from literature_helper.config import AppConfig
+        from literature_helper.models import TaskStatus
+        from literature_helper.workflow import LiteratureWorkflow
+        from playwright.async_api import async_playwright
+
+        config_path = os.environ.get("LITHELPER_CONFIG")
+        config = AppConfig.load(Path(config_path) if config_path else None)
+        workflow = LiteratureWorkflow(config, output=lambda _message: None)
+        task = workflow.store.get(task_id)
+        if not task.request_url:
+            raise ValueError("任务没有 request_url，无法打开科研通详情页")
+        async with async_playwright() as playwright:
+            context = await workflow._launch_context(playwright, headless=False)
+            try:
+                page = context.pages[0] if context.pages else await context.new_page()
+                await page.goto(task.request_url, wait_until="domcontentloaded", timeout=60_000)
+                await workflow.adapter.accept_uploaded_file(page)
+                updated = workflow.store.update(
+                    task.id,
+                    TaskStatus.CONFIRMED,
+                    message="已通过站点详情页同步采纳文件",
+                    request_url=page.url,
+                    error=None,
+                )
+                return updated.to_dict()
+            finally:
+                await workflow._safe_close_context(context)
+
+    with _PROFILE_LOCK:
+        return asyncio.run(run())
 
 
 @mcp.tool()
-def accept_paper(task_id: str) -> str:
+def accept_paper(task_id: str, approved: bool = False) -> str:
     """Accept a downloaded file and transfer科研通积分; requires explicit opt-in."""
+    if not approved:
+        return "错误：接受文件会转移科研通积分；请传入 approved=true 明确确认"
     if os.environ.get("LITHELPER_ALLOW_AUTO_ACCEPT") != "1":
         return "错误：接受文件会转移科研通积分；请先设置 LITHELPER_ALLOW_AUTO_ACCEPT=1"
     error, payload = _run_lithelper_action("confirm", task_id.strip(), float(os.environ.get("LITHELPER_TIMEOUT_SECONDS", "900")))
     if error:
+        if os.environ.get("LITHELPER_DIRECT_BROWSER_FALLBACK", "1") == "1":
+            try:
+                direct = _direct_accept_task(task_id.strip())
+                return json.dumps({"ok": True, "method": "direct_browser_fallback", "task": direct}, ensure_ascii=False)
+            except Exception as direct_error:
+                error = f"{error}；浏览器兜底也失败：{direct_error}"
         return "错误：" + error
     return json.dumps(payload, ensure_ascii=False)
+
+
+@mcp.tool()
+def list_tasks() -> str:
+    """List local Literature Helper tasks without publishing or downloading anything."""
+    payload, error, _ = _run_cli("list", timeout=30)
+    if error:
+        return json.dumps({"ok": False, "error": error}, ensure_ascii=False)
+    return json.dumps({"ok": True, "tasks": payload}, ensure_ascii=False)
+
+
+@mcp.tool()
+def get_task(task_id: str) -> str:
+    """Read one task record, including request URL and current status."""
+    payload, error, _ = _run_cli("show", task_id.strip(), timeout=30)
+    if error:
+        return json.dumps({"ok": False, "error": error, "task_id": task_id}, ensure_ascii=False)
+    return json.dumps({"ok": True, "task": payload}, ensure_ascii=False)
+
+
+@mcp.tool()
+def download_existing(task_id: str, download_dir: str | None = None, high_speed: bool = False) -> str:
+    """Resume an existing task without publishing a duplicate request."""
+    target_dir = Path(download_dir).expanduser().resolve() if download_dir else None
+    if target_dir:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    parts = ["recover", task_id.strip()]
+    if target_dir:
+        parts.extend(["--download-dir", str(target_dir)])
+    temporary_config: Path | None = None
+    config_path = os.environ.get("LITHELPER_CONFIG")
+    if high_speed and config_path:
+        try:
+            config_data = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            config_data["prefer_high_speed_download"] = True
+            handle, temp_name = tempfile.mkstemp(prefix="lithelper-mcp-", suffix=".json")
+            os.close(handle)
+            temporary_config = Path(temp_name)
+            temporary_config.write_text(json.dumps(config_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            config_path = str(temporary_config)
+        except (OSError, json.JSONDecodeError) as exc:
+            return json.dumps({"ok": False, "task_id": task_id, "error": f"无法准备高速通道配置：{exc}"}, ensure_ascii=False)
+    try:
+        payload, error, _ = _run_cli(*parts, config_path=config_path)
+    finally:
+        if temporary_config:
+            temporary_config.unlink(missing_ok=True)
+    if error:
+        return json.dumps(
+            {"ok": False, "task_id": task_id, "error": error,
+             "hint": "若任务处于待确认状态，请先调用 accept_paper(task_id, approved=true)，再重试。"},
+            ensure_ascii=False,
+        )
+    return json.dumps({"ok": True, "task": payload, "high_speed_requested": high_speed}, ensure_ascii=False)
 
 
 if __name__ == "__main__":

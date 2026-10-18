@@ -3,7 +3,8 @@
 ## 目标
 
 用 `download_paper` 通过科研通下载单篇 DOI/准确标题，并返回本地 PDF 绝对路径；可选
-传入下载目录。`check_for_updates` 检查 Literature Helper 版本。
+传入下载目录。`list_tasks` / `get_task` / `download_existing` 用于续接已有任务，
+`check_for_updates` 检查 Literature Helper 版本。
 
 ## 必须的首次设置
 
@@ -24,6 +25,8 @@
 - MCP Server 只调用 `lithelper --json --non-interactive fetch`，不解析 TUI 文本。
 - `download_paper` 的第二个参数可指定绝对下载目录；未指定时使用
   `LITHELPER_DOWNLOAD_DIR` 或 Literature Helper 配置中的目录。
+- 已有任务优先使用 `download_existing`，不要为了重试再次发布同一 DOI；
+  `high_speed=true` 会为本次恢复启用高速通道配置。
 - 服务启动时默认在后台检查 PyPI 更新；设置 `LITHELPER_UPDATE_CHECK=0` 可关闭。
 - 不要把密码、验证码或浏览器 profile 提交到仓库。
 - Edge、Codex IAB 与 Literature Helper Playwright profile 是不同会话；不能假设
@@ -32,6 +35,10 @@
 - `downloaded_pending_review` 且 `validation.ok=true` 表示 PDF 已下载并通过基础检查。
 - 接受文件会把积分给应助人。`accept_paper(task_id)` 和 `auto_accept=true` 默认关闭，
   只有设置 `LITHELPER_ALLOW_AUTO_ACCEPT=1` 才会执行；调用前应确认任务 ID、文件和积分。
+- 科研通真实顺序是“采纳文件 → 下载”。如果 CLI 的 `recover` 因本地状态为
+  `failed` 拒绝，先让用户确认是否采纳，再调用 `accept_paper(task_id, approved=true)`。
+- DSH 新增 MCP 必须使用 Cordis `- insert:` patch，并将 `toolCallTimeoutMs` 设为至少
+  900000；顶层 `- id:` 只会覆盖已有插件，不能可靠新增 MCP。
 
 ## 本次实测
 
