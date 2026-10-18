@@ -1,0 +1,6 @@
+.lithelper-user/
+downloads/
+.lithelper-test/
+.downloads-test/
+__pycache__/
+*.log
